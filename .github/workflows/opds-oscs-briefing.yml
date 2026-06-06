@@ -1,0 +1,77 @@
+name: OPDs/OSCs Chinese Research Briefing
+
+on:
+  # 07:50 China Standard Time, before the requested 08:00 delivery target.
+  schedule:
+    - cron: '50 23 * * *'
+  # Allows an immediate first run after the automation is merged/pushed; the
+  # script only runs on push when it is already 08:00 or later in China.
+  push:
+    branches:
+      - main
+      - master
+      - work
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run regardless of China weekday/time gating'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+      OPENALEX_MAILTO: ${{ vars.OPENALEX_MAILTO }}
+      BRIEFING_EMAIL_TO: ${{ secrets.BRIEFING_EMAIL_TO }}
+      BRIEFING_EMAIL_FROM: ${{ secrets.BRIEFING_EMAIL_FROM }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      CHINA_HOLIDAYS: ${{ vars.CHINA_HOLIDAYS }}
+      CHINA_EXTRA_WORKDAYS: ${{ vars.CHINA_EXTRA_WORKDAYS }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate scheduled briefing
+        if: github.event_name == 'schedule'
+        run: python scripts/opds_oscs_briefing.py
+
+      - name: Generate manual briefing
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python scripts/opds_oscs_briefing.py --force
+          else
+            python scripts/opds_oscs_briefing.py
+          fi
+
+      - name: Generate immediate briefing after creation/update when already past 08:00 CST
+        if: github.event_name == 'push'
+        run: python scripts/opds_oscs_briefing.py --force-if-after-8
+
+      - name: Upload briefing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opds-oscs-briefing
+          path: briefs/*.md
+          if-no-files-found: ignore
